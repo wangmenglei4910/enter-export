@@ -1,6 +1,6 @@
 import { defineConfig } from 'umi';
 
-// GitHub Pages 仓库名（一键部署脚本会用同名仓库）
+// GitHub Pages 仓库名
 const REPO = process.env.REPO_NAME || 'enter-export';
 const isProd = process.env.NODE_ENV === 'production';
 
@@ -8,9 +8,10 @@ export default defineConfig({
   nodeModulesTransform: {
     type: 'none',
   },
-  // hash 路由，GitHub Pages 无需额外 404 回退
+  // hash 路由：base 用 '/'，避免出现 #/enter-export/xxx 双前缀白屏
+  // 静态资源仍走 /enter-export/ 前缀
   history: { type: 'hash' },
-  base: isProd ? `/${REPO}/` : '/',
+  base: '/',
   publicPath: isProd ? `/${REPO}/` : '/',
   outputPath: 'dist',
   title: '仓库管理系统',
@@ -27,7 +28,7 @@ export default defineConfig({
       routes: [
         {
           path: '/user/login',
-          component: '@/pages/user/login',
+          component: '@/pages/user/login/index',
         },
       ],
     },

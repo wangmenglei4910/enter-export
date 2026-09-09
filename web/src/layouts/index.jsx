@@ -204,7 +204,7 @@ const BasicLayout = ({ children }) => {
 
       <Modal
         title="配置云端同步"
-        open={cloudOpen}
+        visible={cloudOpen}
         onCancel={() => setCloudOpen(false)}
         footer={null}
         destroyOnClose

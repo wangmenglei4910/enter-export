@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { Form, Input, Button, Card, message, Tabs, Alert, Typography } from 'antd';
 import { UserOutlined, LockOutlined, CloudOutlined, CopyOutlined } from '@ant-design/icons';
 import { history } from 'umi';
