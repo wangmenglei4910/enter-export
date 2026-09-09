@@ -1,8 +1,8 @@
 /**
- * 云端同步配置（可被 localStorage / URL 覆盖）
- * githubToken 请在登录页填写，不要把真 Token 提交到仓库
+ * 云端同步配置
+ * gistId 已绑定公共数据仓库；Token 请在网页「云端配置」里填写（勿提交到仓库）
  */
 window.INVENTORY_CONFIG = {
-  gistId: 'YOUR_GIST_ID',
+  gistId: '722cc08e3721147e0dd4b255ca77801d',
   githubToken: 'YOUR_GITHUB_TOKEN',
 };

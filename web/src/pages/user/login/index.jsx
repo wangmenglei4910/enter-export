@@ -113,7 +113,15 @@ const LoginPage = () => {
                 创建 Token
               </Link>
             </Paragraph>
-            <Form form={syncForm} layout="vertical" onFinish={onSaveCloud}>
+                  <Form
+                    form={syncForm}
+                    layout="vertical"
+                    onFinish={onSaveCloud}
+                    initialValues={{
+                      gistId: '722cc08e3721147e0dd4b255ca77801d',
+                      githubToken: '',
+                    }}
+                  >
               <Form.Item
                 name="gistId"
                 label="Gist ID"

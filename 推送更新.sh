@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+export PATH="/usr/bin:/opt/homebrew/bin:$PATH"
 cd "$(dirname "$0")"
 
 REPO_NAME="${REPO_NAME:-enter-export}"

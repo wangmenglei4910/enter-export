@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+export PATH="/usr/bin:/opt/homebrew/bin:$PATH"
 cd "$(dirname "$0")"
 
 REPO_NAME="${REPO_NAME:-enter-export}"
@@ -20,7 +21,7 @@ export NODE_ENV=production
 export REPO_NAME
 (
   cd web
-  yarn install --frozen-lockfile 2>/dev/null || yarn install
+  yarn install
   yarn build
 )
 rm -rf docs
@@ -70,12 +71,12 @@ else
 fi
 
 echo "==== 4) 开启 GitHub Pages（/docs）===="
-gh api -X POST "repos/$GH_USER/$REPO_NAME/pages" \
-  -f build_type=legacy \
-  -f source='{"branch":"main","path":"/docs"}' 2>/dev/null \
-|| gh api -X PUT "repos/$GH_USER/$REPO_NAME/pages" \
-  -f build_type=legacy \
-  -f source='{"branch":"main","path":"/docs"}' 2>/dev/null \
+gh api -X POST "repos/$GH_USER/$REPO_NAME/pages" --input - <<JSON
+{"build_type":"legacy","source":{"branch":"main","path":"/docs"}}
+JSON
+|| gh api -X PUT "repos/$GH_USER/$REPO_NAME/pages" --input - <<JSON
+{"source":{"branch":"main","path":"/docs"}}
+JSON
 || {
   echo "自动开启 Pages 失败，请手动打开："
   echo "https://github.com/$GH_USER/$REPO_NAME/settings/pages"
