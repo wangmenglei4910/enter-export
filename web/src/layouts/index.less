@@ -1,0 +1,53 @@
+.layout {
+  min-height: 100vh;
+}
+
+.header {
+  background: #fff;
+  padding: 0;
+  height: 64px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+  position: relative;
+  z-index: 10;
+}
+
+.logo {
+  padding: 0 24px;
+  font-size: 20px;
+  font-weight: bold;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.logout {
+  margin-right: 24px;
+}
+
+.sider {
+  background: #fff;
+  box-shadow: 2px 0 8px 0 rgba(29, 35, 41, 0.05);
+  position: relative;
+  z-index: 10;
+  overflow: auto;
+}
+
+.menu {
+  height: 100%;
+  border-right: 0;
+}
+
+.content {
+  padding: 24px;
+  background: #f0f2f5;
+  /* 避免 Content 被 Layout 撑满后，下面出现大片空白 */
+  min-height: 0;
+}
+
+.main {
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  min-height: auto;
+} 

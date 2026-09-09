@@ -1,0 +1,42 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+    'Noto Color Emoji';
+}
+
+/* 表格单元格不被挤没；操作列完整显示 */
+.app-table {
+  .ant-table {
+    overflow: visible;
+  }
+
+  .ant-table-container {
+    border-radius: 2px;
+  }
+
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  /* 需要换行的长文本列自行加 className */
+  .ant-table-cell-wrap {
+    white-space: normal !important;
+    word-break: break-word;
+    min-width: 160px;
+    max-width: 360px;
+  }
+
+  .ant-table-cell-fix-left {
+    white-space: nowrap;
+  }
+}

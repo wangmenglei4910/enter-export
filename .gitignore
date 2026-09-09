@@ -1,0 +1,11 @@
+node_modules/
+web/node_modules/
+admin/node_modules/
+web/dist/
+web/src/.umi/
+web/src/.umi-production/
+.DS_Store
+*.log
+.env
+.idea/
+.vscode/
