@@ -60,25 +60,27 @@ yarn start
 
 ## 数据说明
 
-云端 `inventory.json` 结构概要：
+每个菜单对应 Gist 里一个独立 JSON 文件：
 
-```json
-{
-  "version": 1,
-  "updatedAt": 0,
-  "products": [],
-  "customers": [],
-  "suppliers": [],
-  "inbound": [],
-  "outbound": [],
-  "inboundOrders": [],
-  "outboundOrders": [],
-  "checks": [],
-  "alerts": []
-}
-```
+| 文件 | 对应菜单 |
+|------|----------|
+| `accounts.json` | 登录账号 |
+| `products.json` | 商品管理 |
+| `customers.json` | 客户管理 |
+| `suppliers.json` | 供应商管理 |
+| `inbound.json` | 入库 |
+| `outbound.json` | 出库 |
+| `inboundOrders.json` | 入库单 |
+| `outboundOrders.json` | 出库单 |
+| `checks.json` | 库存盘点 |
+| `alerts.json` | 库存预警 |
 
-冲突策略：同一 `id` 按 `updatedAt` 取较新记录后写回 Gist。
+默认账号（写在 `accounts.json`）：
+
+- `13691054910` / `12356336`
+- `wangmenglei` / `111111`
+
+冲突策略：同一 `id` 按 `updatedAt` 取较新记录后写回对应 JSON 文件。
 
 ## 安全提示
 

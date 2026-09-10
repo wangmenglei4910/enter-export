@@ -5,7 +5,6 @@ import { history } from 'umi';
 import {
   isSyncReady,
   saveConfigOverride,
-  saveSession,
   resetInventoryStore,
   getInventoryStore,
 } from '@/services/inventoryStore';
@@ -46,22 +45,18 @@ const LoginPage = () => {
       message.warning('请先配置云端同步（Gist + Token）');
       return;
     }
-    if (values.username === 'wangmenglei' && values.password === '111111') {
-      saveSession(values.username);
+    setBusy(true);
+    try {
       resetInventoryStore();
       const store = getInventoryStore();
-      setBusy(true);
-      try {
-        await store.init();
-        message.success('登录成功，已开启多端同步');
-        history.replace('/home');
-      } catch (err) {
-        message.error(err.message || '同步失败');
-      } finally {
-        setBusy(false);
-      }
-    } else {
-      message.error('用户名或密码错误');
+      await store.init();
+      await store.login(values.username, values.password);
+      message.success('登录成功，已开启多端同步');
+      history.replace('/home');
+    } catch (err) {
+      message.error(err.message || '登录失败');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -101,14 +96,11 @@ const LoginPage = () => {
             key="cloud"
           >
             <Paragraph type="secondary" style={{ fontSize: 13 }}>
-              1. 新建 Gist，文件名 <Text code>inventory.json</Text>，内容先写{' '}
-              <Text code>{'{}'}</Text>
+              数据按菜单拆成多个 JSON 存到 Gist：
+              <Text code>accounts.json</Text>、<Text code>products.json</Text>、
+              <Text code>inbound.json</Text> 等。
               <br />
-              2. 复制 Gist ID（网址最后一段）
-              <br />
-              3. 创建 Token，仅勾选 <Text code>gist</Text>
-              <br />
-              参考：
+              Token 仅勾选 <Text code>gist</Text>：
               <Link href="https://github.com/settings/tokens" target="_blank">
                 创建 Token
               </Link>
@@ -162,9 +154,9 @@ const LoginPage = () => {
             <Form name="login" onFinish={onFinish} autoComplete="off" layout="vertical">
               <Form.Item
                 name="username"
-                rules={[{ required: true, message: '请输入用户名' }]}
+                rules={[{ required: true, message: '请输入用户名/手机号' }]}
               >
-                <Input prefix={<UserOutlined />} placeholder="用户名" size="large" />
+                <Input prefix={<UserOutlined />} placeholder="用户名 / 手机号" size="large" />
               </Form.Item>
               <Form.Item
                 name="password"
