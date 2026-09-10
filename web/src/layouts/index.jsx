@@ -20,6 +20,7 @@ import { Link, useLocation, history } from 'umi';
 import {
   HomeOutlined,
   InboxOutlined,
+  ImportOutlined,
   ExportOutlined,
   TeamOutlined,
   ShopOutlined,
@@ -34,6 +35,10 @@ import {
   SaveOutlined,
   HistoryOutlined,
   FileExcelOutlined,
+  AppstoreOutlined,
+  FileTextOutlined,
+  FileDoneOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { useInventory } from '@/hooks/useInventory';
 import {
@@ -254,23 +259,27 @@ const BasicLayout = ({ children }) => {
       children: [
         {
           key: '/inventory/product',
+          icon: <AppstoreOutlined />,
           label: <Link to="/inventory/product">商品管理</Link>,
         },
         {
           key: '/inventory/inbound',
-          icon: <ExportOutlined />,
+          icon: <ImportOutlined />,
           label: <Link to="/inventory/inbound">入库</Link>,
         },
         {
           key: '/inventory/outbound',
+          icon: <ExportOutlined />,
           label: <Link to="/inventory/outbound">出库</Link>,
         },
         {
           key: '/inventory/inbound-order',
+          icon: <FileTextOutlined />,
           label: <Link to="/inventory/inbound-order">入库单</Link>,
         },
         {
           key: '/inventory/outbound-order',
+          icon: <FileDoneOutlined />,
           label: <Link to="/inventory/outbound-order">出库单</Link>,
         },
         {
@@ -292,6 +301,7 @@ const BasicLayout = ({ children }) => {
       children: [
         {
           key: '/partner/customer',
+          icon: <UserOutlined />,
           label: <Link to="/partner/customer">客户管理</Link>,
         },
         {
