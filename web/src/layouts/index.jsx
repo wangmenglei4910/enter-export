@@ -33,6 +33,7 @@ import {
   UploadOutlined,
   SaveOutlined,
   HistoryOutlined,
+  FileExcelOutlined,
 } from '@ant-design/icons';
 import { useInventory } from '@/hooks/useInventory';
 import {
@@ -43,6 +44,7 @@ import {
   getInventoryStore,
   listLocalBackups,
 } from '@/services/inventoryStore';
+import { exportInventoryExcel } from '@/utils/exportExcel';
 import styles from './index.less';
 
 const { Header, Content, Sider } = Layout;
@@ -86,6 +88,8 @@ const BasicLayout = ({ children }) => {
     restoreCloudLatest,
     createManualBackup,
     localBackups,
+    data,
+    stockMap,
   } = useInventory();
   const [cloudOpen, setCloudOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -163,6 +167,19 @@ const BasicLayout = ({ children }) => {
       message.success('已下载完整备份文件');
     } catch (err) {
       message.error(err.message || '导出失败');
+    }
+  };
+
+  const downloadExcel = () => {
+    try {
+      const filename = exportInventoryExcel({
+        data,
+        stockMap,
+        company: session?.company || '',
+      });
+      message.success(`已导出 Excel：${filename}`);
+    } catch (err) {
+      message.error(err.message || 'Excel 导出失败');
     }
   };
 
@@ -299,6 +316,9 @@ const BasicLayout = ({ children }) => {
           {session?.company ? <span className={styles.logoSub}>仓库管理系统</span> : null}
         </div>
         <Space>
+          <Button type="link" icon={<FileExcelOutlined />} onClick={downloadExcel}>
+            导出Excel
+          </Button>
           <Button type="link" icon={<SaveOutlined />} onClick={openCloudConfig}>
             备份与同步
           </Button>
@@ -379,6 +399,9 @@ const BasicLayout = ({ children }) => {
         <Divider>数据备份 / 恢复</Divider>
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Space wrap>
+            <Button icon={<FileExcelOutlined />} type="primary" ghost onClick={downloadExcel}>
+              导出 Excel（多 Sheet）
+            </Button>
             <Button icon={<DownloadOutlined />} onClick={downloadBackup} loading={backupBusy}>
               导出完整备份
             </Button>
