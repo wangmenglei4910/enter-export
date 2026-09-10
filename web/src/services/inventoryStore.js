@@ -619,28 +619,58 @@ async function fetchGistBundle(gistId, token) {
   return parseGistFiles(gist.files || {});
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 串行化 Gist 写入，避免登录/轮询/备份并发 PATCH 触发 409 */
+let gistWriteChain = Promise.resolve();
+
+function enqueueGistWrite(task) {
+  const run = gistWriteChain.then(task, task);
+  gistWriteChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 async function patchGistFiles(gistId, token, files) {
-  const res = await fetch(`https://api.github.com/gists/${gistId}`, {
-    method: 'PATCH',
-    headers: {
-      ...authHeaders(token),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ files }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    if (res.status === 401 || res.status === 403) {
-      throw new Error('Token 无效或权限不足，请重新配置');
+  return enqueueGistWrite(async () => {
+    let lastText = '';
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+        method: 'PATCH',
+        headers: {
+          ...authHeaders(token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ files }),
+      });
+      if (res.ok) {
+        try {
+          const gist = await res.json();
+          return parseGistFiles(gist.files || {});
+        } catch {
+          return null;
+        }
+      }
+      lastText = await res.text();
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('Token 无效或权限不足，请重新配置');
+      }
+      // 409：Gist 并发冲突；5xx：短暂故障 —— 退避重试
+      if (res.status === 409 || res.status === 502 || res.status === 503 || res.status === 429) {
+        const wait = Math.min(8000, 300 * 2 ** attempt) + Math.floor(Math.random() * 400);
+        await sleep(wait);
+        continue;
+      }
+      throw new Error(`写入云端失败(${res.status}): ${lastText.slice(0, 80)}`);
     }
-    throw new Error(`写入云端失败(${res.status}): ${text.slice(0, 80)}`);
-  }
-  try {
-    const gist = await res.json();
-    return parseGistFiles(gist.files || {});
-  } catch {
-    return null;
-  }
+    throw new Error(
+      `写入云端失败(409)：云端正忙或存在并发写入，请稍候再试。${lastText.slice(0, 60)}`,
+    );
+  });
 }
 
 export function calcStockMap(data) {
@@ -718,18 +748,37 @@ export function getInventoryStore(userConfig = {}) {
     return () => listeners.delete(fn);
   }
 
+  let initPromise = null;
+
   async function ensureCloudFiles() {
-    const remote = await fetchGistBundle(cfg.gistId, cfg.githubToken);
+    const gist = await fetchGistRaw(cfg.gistId, cfg.githubToken);
+    const remote = parseGistFiles(gist.files || {});
     let mergedData = mergeData(data, remote.data);
     // 防止本地空缓存把云端有数据覆盖成空
     if (countActiveRecords(data) === 0 && countActiveRecords(remote.data) > 0) {
       mergedData = normalizeData(remote.data);
     }
     const mergedAccounts = mergeAccounts(accounts, remote.accounts);
-    const files = buildGistFilesPatch(mergedData, mergedAccounts);
-    const written = await patchGistFiles(cfg.gistId, cfg.githubToken, files);
-    data = written?.data || mergedData;
-    accounts = written?.accounts || mergedAccounts;
+
+    // 只补齐缺失文件，登录时不再整包重写（避免 409 冲突）
+    const missingKeys = [];
+    for (const key of COLLECTIONS) {
+      const filename = MENU_FILES[key];
+      if (!gist.files?.[filename]?.content) missingKeys.push(key);
+    }
+    const needAccounts = !gist.files?.[ACCOUNTS_FILE]?.content;
+
+    if (missingKeys.length || needAccounts) {
+      const onlyKeys = needAccounts ? [...missingKeys, 'accounts'] : missingKeys;
+      const files = buildGistFilesPatch(mergedData, mergedAccounts, onlyKeys);
+      const written = await patchGistFiles(cfg.gistId, cfg.githubToken, files);
+      data = written?.data || mergedData;
+      accounts = written?.accounts || mergedAccounts;
+    } else {
+      data = mergedData;
+      accounts = mergedAccounts;
+    }
+
     pushLocalBackup(data, accounts, 'ensure-cloud');
     saveLocalData(data);
     saveLocalAccounts(accounts);
@@ -1030,26 +1079,33 @@ export function getInventoryStore(userConfig = {}) {
   }
 
   async function init() {
-    if (!useCloud) {
-      notify('local');
-      return { mode: 'local', message: '未配置云端，仅本机可用（请定期导出备份）' };
-    }
-    try {
-      await ensureCloudFiles();
-      if (dirty) {
-        await pushRemote();
+    if (initPromise) return initPromise;
+    initPromise = (async () => {
+      if (!useCloud) {
+        notify('local');
+        return { mode: 'local', message: '未配置云端，仅本机可用（请定期导出备份）' };
       }
-      await maybeCloudBackup('init');
-      startPolling();
-      bindWake();
-      lastError = '';
-      notify('online');
-      return { mode: 'online', message: '已连接云端' };
-    } catch (err) {
-      lastError = err.message || '同步失败';
-      notify('error');
-      return { mode: 'error', message: lastError };
-    }
+      try {
+        await ensureCloudFiles();
+        if (dirty) {
+          await pushRemote();
+        }
+        // 备份异步进行，不阻塞登录/连接
+        maybeCloudBackup('init').catch(() => {});
+        startPolling();
+        bindWake();
+        lastError = '';
+        notify('online');
+        return { mode: 'online', message: '已连接云端' };
+      } catch (err) {
+        lastError = err.message || '同步失败';
+        notify('error');
+        return { mode: 'error', message: lastError };
+      }
+    })().finally(() => {
+      initPromise = null;
+    });
+    return initPromise;
   }
 
   function destroy() {

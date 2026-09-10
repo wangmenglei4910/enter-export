@@ -61,9 +61,12 @@ const LoginPage = () => {
     }
     setBusy(true);
     try {
-      resetInventoryStore();
       const store = getInventoryStore();
-      await store.init();
+      const ready = await store.init();
+      if (ready.mode === 'error') {
+        message.error(ready.message || '云端连接失败');
+        return;
+      }
       await store.login(values.phone, values.password);
       message.success('登录成功');
       history.replace('/home');
@@ -86,9 +89,12 @@ const LoginPage = () => {
     }
     setBusy(true);
     try {
-      resetInventoryStore();
       const store = getInventoryStore();
-      await store.init();
+      const ready = await store.init();
+      if (ready.mode === 'error') {
+        message.error(ready.message || '云端连接失败');
+        return;
+      }
       await store.register({
         phone: values.phone,
         password: values.password,
