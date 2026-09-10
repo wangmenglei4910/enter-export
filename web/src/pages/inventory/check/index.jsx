@@ -9,7 +9,7 @@ const { Option } = Select;
 const InventoryCheckPage = () => {
   const [form] = Form.useForm();
   const [isModalVisible, setIsModalVisible] = useState(false);
-  const { data, upsert, stockMap, today } = useInventory();
+  const { data, upsert, stockMap, today, writing } = useInventory();
   const dataSource = data.checks || [];
   const products = data.products || [];
 
@@ -42,7 +42,12 @@ const InventoryCheckPage = () => {
       render: (_, record) => (
         <Space size="small" className="ant-table-cell-actions">
           {record.status !== '已完成' && (
-            <Button type="link" icon={<CheckOutlined />} onClick={() => handleComplete(record)}>
+            <Button
+              type="link"
+              icon={<CheckOutlined />}
+              disabled={writing}
+              onClick={() => handleComplete(record)}
+            >
               完成盘点
             </Button>
           )}
@@ -62,38 +67,47 @@ const InventoryCheckPage = () => {
       title: '确认完成',
       content: '确定要完成该盘点任务吗？',
       onOk: async () => {
-        await upsert('checks', { ...record, status: '已完成' });
-        message.success('盘点完成');
+        const hide = message.loading('正在保存并同步…', 0);
+        try {
+          await upsert('checks', { ...record, status: '已完成' });
+          message.success('盘点完成');
+        } finally {
+          hide();
+        }
       },
     });
   };
 
-  const handleModalOk = () => {
+  const handleModalOk = () =>
     form.validateFields().then(async (values) => {
-      const product = products.find((p) => p.id === values.productId);
-      const systemQuantity =
-        values.systemQuantity ?? (product ? stockMap[product.id] || 0 : 0);
-      await upsert('checks', {
-        checkId: `CK${Date.now()}`,
-        productId: values.productId,
-        productName: product?.name || '',
-        systemQuantity: Number(systemQuantity) || 0,
-        actualQuantity: Number(values.actualQuantity) || 0,
-        checkDate: values.checkDate || today,
-        status: '进行中',
-      });
-      message.success('添加盘点任务成功');
-      setIsModalVisible(false);
-      form.resetFields();
+      const hide = message.loading('正在添加并同步…', 0);
+      try {
+        const product = products.find((p) => p.id === values.productId);
+        const systemQuantity =
+          values.systemQuantity ?? (product ? stockMap[product.id] || 0 : 0);
+        await upsert('checks', {
+          checkId: `CK${Date.now()}`,
+          productId: values.productId,
+          productName: product?.name || '',
+          systemQuantity: Number(systemQuantity) || 0,
+          actualQuantity: Number(values.actualQuantity) || 0,
+          checkDate: values.checkDate || today,
+          status: '进行中',
+        });
+        message.success('添加盘点任务成功');
+        setIsModalVisible(false);
+        form.resetFields();
+      } finally {
+        hide();
+      }
     });
-  };
 
   return (
     <div>
       <Card
         title="库存盘点"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+          <Button type="primary" icon={<PlusOutlined />} disabled={writing} onClick={handleAdd}>
             新增盘点
           </Button>
         }
@@ -103,9 +117,11 @@ const InventoryCheckPage = () => {
 
       <Modal
         title="新增盘点"
-        open={isModalVisible}
+        visible={isModalVisible}
         onOk={handleModalOk}
-        onCancel={() => setIsModalVisible(false)}
+        onCancel={() => !writing && setIsModalVisible(false)}
+        confirmLoading={writing}
+        maskClosable={!writing}
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -117,7 +133,8 @@ const InventoryCheckPage = () => {
               placeholder="请选择商品"
               onChange={(id) => {
                 form.setFieldsValue({ systemQuantity: stockMap[id] || 0 });
-              }}
+              }
+              }
             >
               {products.map((p) => (
                 <Option key={p.id} value={p.id}>

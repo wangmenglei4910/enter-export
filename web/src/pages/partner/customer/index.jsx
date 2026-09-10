@@ -9,7 +9,7 @@ const CustomerPage = () => {
   const [form] = Form.useForm();
   const [visible, setVisible] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
-  const { data, upsert, remove } = useInventory();
+  const { data, upsert, remove, writing } = useInventory();
   const dataSource = data.customers || [];
 
   const columns = [
@@ -57,17 +57,24 @@ const CustomerPage = () => {
           <Button
             type="link"
             icon={<EyeOutlined />}
+            disabled={writing}
             onClick={() => history.push(`/partner/customer/${record.id}/orders`)}
           >
             查看订单
           </Button>
-          <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            disabled={writing}
+            onClick={() => handleEdit(record)}
+          >
             编辑
           </Button>
           <Button
             type="link"
             danger
             icon={<DeleteOutlined />}
+            disabled={writing}
             onClick={() => handleDelete(record)}
           >
             删除
@@ -94,31 +101,40 @@ const CustomerPage = () => {
       title: '确认删除',
       content: `确定要删除客户"${record.name}"吗？`,
       onOk: async () => {
-        await remove('customers', record.id);
-        message.success('删除成功');
+        const hide = message.loading('正在删除并同步…', 0);
+        try {
+          await remove('customers', record.id);
+          message.success('删除成功');
+        } finally {
+          hide();
+        }
       },
     });
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = () =>
     form.validateFields().then(async (values) => {
-      await upsert('customers', {
-        ...(editingCustomer || {}),
-        ...values,
-        status: values.status || 'active',
-        id: editingCustomer?.id,
-      });
-      message.success(editingCustomer ? '更新成功' : '添加成功');
-      setVisible(false);
+      const hide = message.loading(editingCustomer ? '正在保存…' : '正在添加并同步…', 0);
+      try {
+        await upsert('customers', {
+          ...(editingCustomer || {}),
+          ...values,
+          status: values.status || 'active',
+          id: editingCustomer?.id,
+        });
+        message.success(editingCustomer ? '更新成功' : '添加成功');
+        setVisible(false);
+      } finally {
+        hide();
+      }
     });
-  };
 
   return (
     <div>
       <Card
         title="客户管理"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+          <Button type="primary" icon={<PlusOutlined />} disabled={writing} onClick={handleAdd}>
             新增客户
           </Button>
         }
@@ -128,10 +144,12 @@ const CustomerPage = () => {
 
       <Modal
         title={editingCustomer ? '编辑客户' : '新增客户'}
-        open={visible}
+        visible={visible}
         onOk={handleSubmit}
-        onCancel={() => setVisible(false)}
+        onCancel={() => !writing && setVisible(false)}
+        confirmLoading={writing}
         destroyOnClose
+        maskClosable={!writing}
       >
         <Form form={form} layout="vertical" initialValues={{ status: 'active' }}>
           <Form.Item

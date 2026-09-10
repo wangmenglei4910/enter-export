@@ -469,6 +469,7 @@ export function getInventoryStore(userConfig = {}) {
       isCloud: useCloud,
       config: cfg,
       loggedIn: Boolean(loadSession()),
+      writing,
     };
   }
 
@@ -513,6 +514,7 @@ export function getInventoryStore(userConfig = {}) {
   async function persist(mutator, changedKey) {
     writing = true;
     dirty = true;
+    notify(status === 'local' ? 'local' : 'idle');
     try {
       const draft = normalizeData(
         typeof mutator === 'function' ? mutator(normalizeData(data)) : mutator,
@@ -536,6 +538,7 @@ export function getInventoryStore(userConfig = {}) {
       throw err;
     } finally {
       writing = false;
+      notify();
     }
   }
 

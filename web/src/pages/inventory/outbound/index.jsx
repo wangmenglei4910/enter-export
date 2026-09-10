@@ -10,7 +10,7 @@ const OutboundPage = () => {
   const [form] = Form.useForm();
   const [visible, setVisible] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
-  const { data, upsert, remove, today } = useInventory();
+  const { data, upsert, remove, today, writing } = useInventory();
   const dataSource = data.outbound || [];
   const products = data.products || [];
   const customers = data.customers || [];
@@ -28,8 +28,12 @@ const OutboundPage = () => {
       width: 140,
       render: (_, record) => (
         <Space size="small" className="ant-table-cell-actions">
-          <a onClick={() => handleEdit(record)}>编辑</a>
-          <a onClick={() => handleDelete(record)}>删除</a>
+          <Button type="link" disabled={writing} onClick={() => handleEdit(record)}>
+            编辑
+          </Button>
+          <Button type="link" danger disabled={writing} onClick={() => handleDelete(record)}>
+            删除
+          </Button>
         </Space>
       ),
     },
@@ -53,36 +57,45 @@ const OutboundPage = () => {
       title: '确认删除',
       content: '确定要删除这条记录吗？',
       onOk: async () => {
-        await remove('outbound', record.id);
-        message.success('删除成功');
+        const hide = message.loading('正在删除并同步…', 0);
+        try {
+          await remove('outbound', record.id);
+          message.success('删除成功');
+        } finally {
+          hide();
+        }
       },
     });
   };
 
-  const handleModalOk = () => {
+  const handleModalOk = () =>
     form.validateFields().then(async (values) => {
-      const product = products.find((p) => p.id === values.productId);
-      const customer = customers.find((c) => c.id === values.customerId);
-      await upsert('outbound', {
-        ...(editingRecord || {}),
-        ...values,
-        productName: product?.name || values.productName || '',
-        customer: customer?.name || values.customer || '',
-        unit: values.unit || '吨',
-        date: values.date || today,
-        id: editingRecord?.id,
-      });
-      message.success(editingRecord ? '修改成功' : '添加成功');
-      setVisible(false);
+      const hide = message.loading(editingRecord ? '正在保存…' : '正在添加并同步…', 0);
+      try {
+        const product = products.find((p) => p.id === values.productId);
+        const customer = customers.find((c) => c.id === values.customerId);
+        await upsert('outbound', {
+          ...(editingRecord || {}),
+          ...values,
+          productName: product?.name || values.productName || '',
+          customer: customer?.name || values.customer || '',
+          unit: values.unit || '吨',
+          date: values.date || today,
+          id: editingRecord?.id,
+        });
+        message.success(editingRecord ? '修改成功' : '添加成功');
+        setVisible(false);
+      } finally {
+        hide();
+      }
     });
-  };
 
   return (
     <div>
       <Card
         title="出库管理"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+          <Button type="primary" icon={<PlusOutlined />} disabled={writing} onClick={handleAdd}>
             添加出库
           </Button>
         }
@@ -92,10 +105,12 @@ const OutboundPage = () => {
 
       <Modal
         title={editingRecord ? '编辑出库' : '添加出库'}
-        open={visible}
+        visible={visible}
         onOk={handleModalOk}
-        onCancel={() => setVisible(false)}
+        onCancel={() => !writing && setVisible(false)}
+        confirmLoading={writing}
         destroyOnClose
+        maskClosable={!writing}
       >
         <Form form={form} layout="vertical">
           <Form.Item

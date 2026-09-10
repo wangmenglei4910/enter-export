@@ -33,6 +33,7 @@ export function InventoryProvider({ children }) {
     return {
       ...snapshot,
       data,
+      writing: Boolean(snapshot?.writing),
       stockMap: calcStockMap(data),
       today: todayStr(),
       upsert: store.upsert.bind(store),
@@ -40,6 +41,7 @@ export function InventoryProvider({ children }) {
       replaceCollection: store.replaceCollection.bind(store),
       pullRemote: store.pullRemote.bind(store),
       getConfigLink: store.getConfigLink.bind(store),
+      login: store.login?.bind(store),
     };
   }, [snapshot, store]);
 

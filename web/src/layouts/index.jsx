@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Layout, Menu, Button, Tag, Space, Tooltip, Modal, Form, Input, message, Alert } from 'antd';
+import { Layout, Menu, Button, Tag, Space, Tooltip, Modal, Form, Input, message, Alert, Spin } from 'antd';
 import { Link, useLocation, history } from 'umi';
 import {
   HomeOutlined,
@@ -36,7 +36,7 @@ const statusMeta = {
 
 const BasicLayout = ({ children }) => {
   const location = useLocation();
-  const { status, lastError, pullRemote, config } = useInventory();
+  const { status, lastError, pullRemote, config, writing } = useInventory();
   const [cloudOpen, setCloudOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form] = Form.useForm();
@@ -198,7 +198,11 @@ const BasicLayout = ({ children }) => {
           />
         </Sider>
         <Layout className={styles.content}>
-          <Content className={styles.main}>{children}</Content>
+          <Content className={styles.main}>
+            <Spin spinning={Boolean(writing)} tip="正在同步云端数据，请稍候…">
+              {children}
+            </Spin>
+          </Content>
         </Layout>
       </Layout>
 
