@@ -15,8 +15,13 @@
 const CONFIG_OVERRIDE_KEY = 'inventory-sync-config-v1';
 const LOCAL_DATA_KEY = 'inventory-data-v2';
 const LOCAL_ACCOUNTS_KEY = 'inventory-accounts-v1';
+const LOCAL_BACKUP_KEY = 'inventory-backups-v1';
+const LOCAL_DIRTY_KEY = 'inventory-dirty-v1';
 const SESSION_KEY = 'inventory-session-v1';
 const POLL_MS = 5000;
+const MAX_LOCAL_BACKUPS = 12;
+const MAX_CLOUD_DAILY_BACKUPS = 7;
+const CLOUD_BACKUP_LATEST = 'backup-latest.json';
 
 /** 菜单对应的数据文件 */
 export const MENU_FILES = {
@@ -99,8 +104,18 @@ function normalizeList(list) {
       id: String(item.id || ''),
       companyId: String(item.companyId || ''),
       updatedAt: Number(item.updatedAt) || 0,
+      _deleted: Boolean(item._deleted),
     }))
     .filter((item) => item.id);
+}
+
+function activeList(list) {
+  return (list || []).filter((item) => !item._deleted);
+}
+
+function countActiveRecords(data) {
+  const d = normalizeData(data);
+  return COLLECTIONS.reduce((sum, key) => sum + activeList(d[key]).length, 0);
 }
 
 function normalizeUser(u) {
@@ -201,11 +216,14 @@ function mergeAccounts(local, remote) {
 
 function filterDataByCompany(raw, companyId) {
   const data = normalizeData(raw);
-  if (!companyId) return data;
   const next = emptyData();
   next.updatedAt = data.updatedAt;
   for (const key of COLLECTIONS) {
-    next[key] = (data[key] || []).filter((item) => String(item.companyId || '') === String(companyId));
+    let rows = activeList(data[key]);
+    if (companyId) {
+      rows = rows.filter((item) => String(item.companyId || '') === String(companyId));
+    }
+    next[key] = rows;
   }
   return next;
 }
@@ -295,7 +313,12 @@ function loadLocalData() {
 }
 
 function saveLocalData(data) {
-  localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(normalizeData(data)));
+  try {
+    localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(normalizeData(data)));
+  } catch (err) {
+    console.warn('本地数据写入失败', err);
+    throw new Error('本地存储已满或不可用，请导出备份后清理浏览器空间');
+  }
 }
 
 function loadLocalAccounts() {
@@ -308,7 +331,170 @@ function loadLocalAccounts() {
 }
 
 function saveLocalAccounts(accounts) {
-  localStorage.setItem(LOCAL_ACCOUNTS_KEY, JSON.stringify(normalizeAccounts(accounts)));
+  try {
+    localStorage.setItem(LOCAL_ACCOUNTS_KEY, JSON.stringify(normalizeAccounts(accounts)));
+  } catch (err) {
+    console.warn('本地账号写入失败', err);
+    throw new Error('本地存储已满或不可用，请导出备份后清理浏览器空间');
+  }
+}
+
+function loadDirtyFlag() {
+  try {
+    return localStorage.getItem(LOCAL_DIRTY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveDirtyFlag(flag) {
+  try {
+    if (flag) localStorage.setItem(LOCAL_DIRTY_KEY, '1');
+    else localStorage.removeItem(LOCAL_DIRTY_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadLocalBackupStore() {
+  try {
+    const raw = localStorage.getItem(LOCAL_BACKUP_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    return { items };
+  } catch {
+    return { items: [] };
+  }
+}
+
+function saveLocalBackupStore(store) {
+  try {
+    localStorage.setItem(LOCAL_BACKUP_KEY, JSON.stringify(store));
+  } catch (err) {
+    console.warn('本地备份写入失败', err);
+  }
+}
+
+function buildBackupPayload(data, accounts, reason = 'auto') {
+  const normalizedData = normalizeData(data);
+  const normalizedAccounts = normalizeAccounts(accounts);
+  return {
+    version: 1,
+    kind: 'enter-export-backup',
+    createdAt: Date.now(),
+    reason: String(reason || 'auto'),
+    recordCount: countActiveRecords(normalizedData),
+    data: normalizedData,
+    accounts: normalizedAccounts,
+  };
+}
+
+function pushLocalBackup(data, accounts, reason = 'auto') {
+  const payload = buildBackupPayload(data, accounts, reason);
+  const store = loadLocalBackupStore();
+  const item = {
+    id: `bk_${payload.createdAt}`,
+    createdAt: payload.createdAt,
+    reason: payload.reason,
+    recordCount: payload.recordCount,
+    data: payload.data,
+    accounts: payload.accounts,
+  };
+  const prev = store.items[0];
+  // 同一秒内重复写入则跳过，避免刷屏
+  if (prev && Math.abs((prev.createdAt || 0) - item.createdAt) < 1000 && prev.recordCount === item.recordCount) {
+    return item;
+  }
+  store.items = [item, ...store.items].slice(0, MAX_LOCAL_BACKUPS);
+  saveLocalBackupStore(store);
+  return item;
+}
+
+export function listLocalBackups() {
+  return loadLocalBackupStore().items.map((item) => ({
+    id: item.id,
+    createdAt: item.createdAt,
+    reason: item.reason,
+    recordCount: item.recordCount,
+  }));
+}
+
+function dayStamp(ts = Date.now()) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function cloudDailyBackupName(ts = Date.now()) {
+  return `backup-${dayStamp(ts)}.json`;
+}
+
+async function fetchGistRaw(gistId, token) {
+  const res = await fetch(`https://api.github.com/gists/${gistId}?ts=${Date.now()}`, {
+    method: 'GET',
+    headers: authHeaders(token),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('Token 无效或权限不足，请重新配置（只需勾选 gist）');
+    }
+    if (res.status === 404) {
+      throw new Error('云端数据仓库不存在，请检查 gistId');
+    }
+    throw new Error(`读取云端失败(${res.status}): ${text.slice(0, 80)}`);
+  }
+  return res.json();
+}
+
+async function writeCloudBackup(gistId, token, data, accounts, reason = 'auto') {
+  const payload = buildBackupPayload(data, accounts, reason);
+  const content = JSON.stringify(payload, null, 2);
+  const files = {
+    [CLOUD_BACKUP_LATEST]: { content },
+    [cloudDailyBackupName(payload.createdAt)]: { content },
+  };
+
+  // 清理过旧的按日备份，只保留最近 N 天
+  try {
+    const gist = await fetchGistRaw(gistId, token);
+    const names = Object.keys(gist.files || {})
+      .filter((name) => /^backup-\d{4}-\d{2}-\d{2}\.json$/.test(name))
+      .sort()
+      .reverse();
+    names.slice(MAX_CLOUD_DAILY_BACKUPS).forEach((name) => {
+      files[name] = null;
+    });
+  } catch {
+    /* 清理失败不影响主备份 */
+  }
+
+  await patchGistFiles(gistId, token, files);
+  return payload;
+}
+
+export function createExportBlob(data, accounts) {
+  const payload = buildBackupPayload(data, accounts, 'export');
+  return new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+}
+
+export function parseBackupFile(raw) {
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  if (!parsed || typeof parsed !== 'object') throw new Error('备份文件格式无效');
+  const data = normalizeData(parsed.data || parsed);
+  const accounts = normalizeAccounts(parsed.accounts || emptyAccounts());
+  if (!countActiveRecords(data) && !(accounts.users || []).length && !parsed.data) {
+    // 允许空备份，但提示可能不对
+  }
+  return {
+    version: 1,
+    kind: 'enter-export-backup',
+    createdAt: Number(parsed.createdAt) || Date.now(),
+    reason: String(parsed.reason || 'import'),
+    recordCount: countActiveRecords(data),
+    data,
+    accounts,
+  };
 }
 
 export function loadSession() {
@@ -429,21 +615,7 @@ function buildGistFilesPatch(data, accounts, onlyKeys) {
 }
 
 async function fetchGistBundle(gistId, token) {
-  const res = await fetch(`https://api.github.com/gists/${gistId}?ts=${Date.now()}`, {
-    method: 'GET',
-    headers: authHeaders(token),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    if (res.status === 401 || res.status === 403) {
-      throw new Error('Token 无效或权限不足，请重新配置（只需勾选 gist）');
-    }
-    if (res.status === 404) {
-      throw new Error('云端数据仓库不存在，请检查 gistId');
-    }
-    throw new Error(`读取云端失败(${res.status}): ${text.slice(0, 80)}`);
-  }
-  const gist = await res.json();
+  const gist = await fetchGistRaw(gistId, token);
   return parseGistFiles(gist.files || {});
 }
 
@@ -473,13 +645,13 @@ async function patchGistFiles(gistId, token, files) {
 
 export function calcStockMap(data) {
   const map = {};
-  for (const p of data.products || []) map[p.id] = 0;
-  for (const row of data.inbound || []) {
+  for (const p of activeList(data.products || [])) map[p.id] = 0;
+  for (const row of activeList(data.inbound || [])) {
     const id = row.productId;
     if (!id) continue;
     map[id] = (map[id] || 0) + (Number(row.quantity) || 0);
   }
-  for (const row of data.outbound || []) {
+  for (const row of activeList(data.outbound || [])) {
     const id = row.productId;
     if (!id) continue;
     map[id] = (map[id] || 0) - (Number(row.quantity) || 0);
@@ -507,10 +679,16 @@ export function getInventoryStore(userConfig = {}) {
   let pollTimer = null;
   let pulling = false;
   let writing = false;
-  let dirty = false;
+  let dirty = loadDirtyFlag();
   let lastError = '';
+  let lastBackupAt = 0;
   let status = useCloud ? 'idle' : 'local';
   const listeners = new Set();
+
+  function setDirty(flag) {
+    dirty = Boolean(flag);
+    saveDirtyFlag(dirty);
+  }
 
   function notify(nextStatus) {
     if (nextStatus) status = nextStatus;
@@ -530,6 +708,8 @@ export function getInventoryStore(userConfig = {}) {
       config: cfg,
       loggedIn: Boolean(session),
       writing,
+      dirty,
+      localBackups: listLocalBackups(),
     };
   }
 
@@ -540,22 +720,43 @@ export function getInventoryStore(userConfig = {}) {
 
   async function ensureCloudFiles() {
     const remote = await fetchGistBundle(cfg.gistId, cfg.githubToken);
-    const mergedData = mergeData(data, remote.data);
+    let mergedData = mergeData(data, remote.data);
+    // 防止本地空缓存把云端有数据覆盖成空
+    if (countActiveRecords(data) === 0 && countActiveRecords(remote.data) > 0) {
+      mergedData = normalizeData(remote.data);
+    }
     const mergedAccounts = mergeAccounts(accounts, remote.accounts);
-    // 首次：把各菜单文件 + 账号文件写全
     const files = buildGistFilesPatch(mergedData, mergedAccounts);
     const written = await patchGistFiles(cfg.gistId, cfg.githubToken, files);
     data = written?.data || mergedData;
     accounts = written?.accounts || mergedAccounts;
+    pushLocalBackup(data, accounts, 'ensure-cloud');
     saveLocalData(data);
     saveLocalAccounts(accounts);
     return getSnapshot();
   }
 
+  async function maybeCloudBackup(reason = 'auto') {
+    if (!useCloud) return;
+    const now = Date.now();
+    // 自动备份至少间隔 2 分钟，手动 backup 不限
+    if (reason === 'auto' && now - lastBackupAt < 2 * 60 * 1000) return;
+    try {
+      await writeCloudBackup(cfg.gistId, cfg.githubToken, data, accounts, reason);
+      lastBackupAt = now;
+    } catch (err) {
+      console.warn('云端备份失败', err);
+    }
+  }
+
   async function pushRemote(changedKeys) {
     const remote = await fetchGistBundle(cfg.gistId, cfg.githubToken);
-    data = mergeData(data, remote.data);
-    // 业务数据推送时账号以云端为准，防止本地旧号覆盖已清空的账号
+    let merged = mergeData(data, remote.data);
+    if (countActiveRecords(data) === 0 && countActiveRecords(remote.data) > 0) {
+      // 本地异常空数据时，绝不拿空数据覆盖云端
+      merged = normalizeData(remote.data);
+    }
+    data = merged;
     accounts = normalizeAccounts(remote.accounts);
     data.updatedAt = Date.now();
 
@@ -566,16 +767,20 @@ export function getInventoryStore(userConfig = {}) {
       data = written.data;
       if (written.accounts) accounts = written.accounts;
     }
+    pushLocalBackup(data, accounts, keys ? `push:${keys.join(',')}` : 'push');
     saveLocalData(data);
     saveLocalAccounts(accounts);
-    dirty = false;
+    setDirty(false);
+    await maybeCloudBackup('auto');
   }
 
   async function persist(mutator, changedKey) {
     writing = true;
-    dirty = true;
+    setDirty(true);
     notify(status === 'local' ? 'local' : 'idle');
     try {
+      const before = normalizeData(data);
+      pushLocalBackup(before, accounts, 'before-write');
       const draft = normalizeData(
         typeof mutator === 'function' ? mutator(normalizeData(data)) : mutator,
       );
@@ -588,6 +793,7 @@ export function getInventoryStore(userConfig = {}) {
         lastError = '';
         notify('online');
       } else {
+        pushLocalBackup(data, accounts, 'local-write');
         lastError = '';
         notify('local');
       }
@@ -619,20 +825,24 @@ export function getInventoryStore(userConfig = {}) {
   async function remove(collection, id) {
     if (!COLLECTIONS.includes(collection)) throw new Error('未知数据集合');
     const session = loadSession();
-    return persist(
-      (prev) => ({
-        ...prev,
-        [collection]: (prev[collection] || []).filter((item) => {
-          if (item.id !== String(id)) return true;
-          // 只能删本公司数据
-          if (session?.companyId && item.companyId && item.companyId !== session.companyId) {
-            return true;
-          }
-          return false;
-        }),
-      }),
-      collection,
-    );
+    const targetId = String(id);
+    return persist((prev) => {
+      const list = [...(prev[collection] || [])];
+      const idx = list.findIndex((item) => item.id === targetId);
+      if (idx < 0) return prev;
+      const item = list[idx];
+      if (session?.companyId && item.companyId && item.companyId !== session.companyId) {
+        return prev;
+      }
+      // 软删除：保留 tombstone，避免多端合并时旧数据复活
+      list[idx] = {
+        ...item,
+        _deleted: true,
+        updatedAt: Date.now(),
+        companyId: item.companyId || session?.companyId || '',
+      };
+      return { ...prev, [collection]: list };
+    }, collection);
   }
 
   async function replaceCollection(collection, list) {
@@ -776,7 +986,7 @@ export function getInventoryStore(userConfig = {}) {
           writing = false;
         }
       } else {
-        dirty = false;
+        setDirty(false);
       }
 
       lastError = '';
@@ -796,7 +1006,13 @@ export function getInventoryStore(userConfig = {}) {
     if (!useCloud) return;
     pollTimer = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      if (writing || dirty) return;
+      if (writing || dirty) {
+        // 有未同步脏数据时优先重试推送
+        if (dirty && !writing) {
+          pushRemote().catch(() => {});
+        }
+        return;
+      }
       pullRemote().catch(() => {});
     }, POLL_MS);
   }
@@ -804,7 +1020,9 @@ export function getInventoryStore(userConfig = {}) {
   function bindWake() {
     if (typeof document === 'undefined') return;
     const onWake = () => {
-      if (!document.hidden) pullRemote().catch(() => {});
+      if (document.hidden) return;
+      if (dirty) pushRemote().catch(() => {});
+      else pullRemote().catch(() => {});
     };
     document.addEventListener('visibilitychange', onWake);
     window.addEventListener('focus', onWake);
@@ -814,10 +1032,14 @@ export function getInventoryStore(userConfig = {}) {
   async function init() {
     if (!useCloud) {
       notify('local');
-      return { mode: 'local', message: '未配置云端，仅本机可用' };
+      return { mode: 'local', message: '未配置云端，仅本机可用（请定期导出备份）' };
     }
     try {
       await ensureCloudFiles();
+      if (dirty) {
+        await pushRemote();
+      }
+      await maybeCloudBackup('init');
       startPolling();
       bindWake();
       lastError = '';
@@ -843,6 +1065,95 @@ export function getInventoryStore(userConfig = {}) {
     return `${base}#gist=${encodeURIComponent(gistId)}&sync=${encodeURIComponent(githubToken)}`;
   }
 
+  function exportBackup() {
+    // 导出当前内存全量（含各公司），不按公司过滤
+    pushLocalBackup(data, accounts, 'export');
+    return createExportBlob(data, accounts);
+  }
+
+  async function importBackup(raw, { merge = true } = {}) {
+    const backup = parseBackupFile(raw);
+    writing = true;
+    setDirty(true);
+    notify('idle');
+    try {
+      pushLocalBackup(data, accounts, 'before-import');
+      if (merge) {
+        data = mergeData(data, backup.data);
+        accounts = mergeAccounts(accounts, backup.accounts);
+      } else {
+        data = normalizeData(backup.data);
+        accounts = normalizeAccounts(backup.accounts);
+      }
+      data.updatedAt = Date.now();
+      accounts = { ...accounts, updatedAt: Date.now() };
+      saveLocalData(data);
+      saveLocalAccounts(accounts);
+      pushLocalBackup(data, accounts, 'after-import');
+      if (useCloud) {
+        await pushRemote();
+        await maybeCloudBackup('import');
+        notify('online');
+      } else {
+        notify('local');
+      }
+      lastError = '';
+      return getSnapshot();
+    } catch (err) {
+      lastError = err.message || '导入失败';
+      notify('error');
+      throw err;
+    } finally {
+      writing = false;
+      notify();
+    }
+  }
+
+  async function restoreLocalBackup(backupId) {
+    const item = loadLocalBackupStore().items.find((x) => x.id === backupId);
+    if (!item) throw new Error('找不到该本地备份');
+    return importBackup(
+      {
+        createdAt: item.createdAt,
+        reason: `restore:${item.reason}`,
+        data: item.data,
+        accounts: item.accounts,
+      },
+      { merge: false },
+    );
+  }
+
+  async function restoreCloudLatest() {
+    if (!useCloud) throw new Error('请先配置云端同步');
+    const gist = await fetchGistRaw(cfg.gistId, cfg.githubToken);
+    const file = gist.files?.[CLOUD_BACKUP_LATEST];
+    if (!file?.content) throw new Error('云端尚无 backup-latest.json，请先产生一次数据变更');
+    return importBackup(file.content, { merge: false });
+  }
+
+  async function listCloudBackups() {
+    if (!useCloud) return [];
+    const gist = await fetchGistRaw(cfg.gistId, cfg.githubToken);
+    return Object.keys(gist.files || {})
+      .filter((name) => name === CLOUD_BACKUP_LATEST || /^backup-\d{4}-\d{2}-\d{2}\.json$/.test(name))
+      .sort()
+      .reverse()
+      .map((name) => ({
+        name,
+        size: gist.files[name]?.size || 0,
+      }));
+  }
+
+  async function createManualBackup() {
+    pushLocalBackup(data, accounts, 'manual');
+    if (useCloud) {
+      await writeCloudBackup(cfg.gistId, cfg.githubToken, data, accounts, 'manual');
+      lastBackupAt = Date.now();
+    }
+    notify();
+    return getSnapshot();
+  }
+
   singleton = {
     init,
     destroy,
@@ -855,6 +1166,13 @@ export function getInventoryStore(userConfig = {}) {
     persist,
     login,
     register,
+    exportBackup,
+    importBackup,
+    restoreLocalBackup,
+    restoreCloudLatest,
+    listCloudBackups,
+    createManualBackup,
+    listLocalBackups,
     isCloud: useCloud,
     config: cfg,
     getConfigLink,

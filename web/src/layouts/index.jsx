@@ -1,11 +1,26 @@
-import React, { useState } from 'react';
-import { Layout, Menu, Button, Tag, Space, Tooltip, Modal, Form, Input, message, Alert, Spin } from 'antd';
+import React, { useMemo, useRef, useState } from 'react';
+import {
+  Layout,
+  Menu,
+  Button,
+  Tag,
+  Space,
+  Tooltip,
+  Modal,
+  Form,
+  Input,
+  message,
+  Alert,
+  Spin,
+  Divider,
+  Select,
+  Popconfirm,
+} from 'antd';
 import { Link, useLocation, history } from 'umi';
 import {
   HomeOutlined,
   InboxOutlined,
   ExportOutlined,
-  FileTextOutlined,
   TeamOutlined,
   ShopOutlined,
   BarChartOutlined,
@@ -14,6 +29,10 @@ import {
   LogoutOutlined,
   CloudSyncOutlined,
   CloudOutlined,
+  DownloadOutlined,
+  UploadOutlined,
+  SaveOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons';
 import { useInventory } from '@/hooks/useInventory';
 import {
@@ -22,6 +41,7 @@ import {
   saveConfigOverride,
   isSyncReady,
   getInventoryStore,
+  listLocalBackups,
 } from '@/services/inventoryStore';
 import styles from './index.less';
 
@@ -34,12 +54,53 @@ const statusMeta = {
   idle: { color: 'processing', text: '同步中…' },
 };
 
+function formatBackupTime(ts) {
+  if (!ts) return '-';
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(
+    d.getMinutes(),
+  )}:${p(d.getSeconds())}`;
+}
+
+function dayFileStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(
+    d.getMinutes(),
+  )}`;
+}
+
 const BasicLayout = ({ children }) => {
   const location = useLocation();
-  const { status, lastError, pullRemote, config, writing, session } = useInventory();
+  const {
+    status,
+    lastError,
+    pullRemote,
+    config,
+    writing,
+    session,
+    exportBackup,
+    importBackup,
+    restoreLocalBackup,
+    restoreCloudLatest,
+    createManualBackup,
+    localBackups,
+  } = useInventory();
   const [cloudOpen, setCloudOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [restoreId, setRestoreId] = useState(undefined);
   const [form] = Form.useForm();
+  const fileRef = useRef(null);
+
+  const backupOptions = useMemo(() => {
+    const list = localBackups?.length ? localBackups : listLocalBackups();
+    return list.map((item) => ({
+      value: item.id,
+      label: `${formatBackupTime(item.createdAt)} · ${item.recordCount} 条 · ${item.reason}`,
+    }));
+  }, [localBackups]);
 
   const handleLogout = () => {
     clearSession();
@@ -49,7 +110,10 @@ const BasicLayout = ({ children }) => {
 
   const openCloudConfig = () => {
     form.setFieldsValue({
-      gistId: config?.gistId && !String(config.gistId).includes('YOUR_') ? config.gistId : '722cc08e3721147e0dd4b255ca77801d',
+      gistId:
+        config?.gistId && !String(config.gistId).includes('YOUR_')
+          ? config.gistId
+          : '722cc08e3721147e0dd4b255ca77801d',
       githubToken: '',
     });
     setCloudOpen(true);
@@ -79,12 +143,82 @@ const BasicLayout = ({ children }) => {
       }
       message.success('已连接云端，多端将实时同步');
       setCloudOpen(false);
-      // 触发页面刷新快照
       window.dispatchEvent(new Event('inventory-store-reset'));
     } catch (err) {
       message.error(err.message || '云端连接失败');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const downloadBackup = () => {
+    try {
+      const blob = exportBackup();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `enter-export-backup-${dayFileStamp()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success('已下载完整备份文件');
+    } catch (err) {
+      message.error(err.message || '导出失败');
+    }
+  };
+
+  const onPickImport = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBackupBusy(true);
+    try {
+      const text = await file.text();
+      await importBackup(text, { merge: true });
+      message.success('已合并导入备份到当前数据');
+    } catch (err) {
+      message.error(err.message || '导入失败');
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const onManualBackup = async () => {
+    setBackupBusy(true);
+    try {
+      await createManualBackup();
+      message.success('已生成本地 + 云端备份');
+    } catch (err) {
+      message.error(err.message || '备份失败');
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const onRestoreLocal = async () => {
+    if (!restoreId) {
+      message.warning('请选择一条本地历史备份');
+      return;
+    }
+    setBackupBusy(true);
+    try {
+      await restoreLocalBackup(restoreId);
+      message.success('已从本地备份恢复');
+    } catch (err) {
+      message.error(err.message || '恢复失败');
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const onRestoreCloud = async () => {
+    setBackupBusy(true);
+    try {
+      await restoreCloudLatest();
+      message.success('已从云端最新备份恢复');
+    } catch (err) {
+      message.error(err.message || '恢复失败');
+    } finally {
+      setBackupBusy(false);
     }
   };
 
@@ -103,27 +237,23 @@ const BasicLayout = ({ children }) => {
       children: [
         {
           key: '/inventory/product',
-          icon: <InboxOutlined />,
           label: <Link to="/inventory/product">商品管理</Link>,
         },
         {
           key: '/inventory/inbound',
-          icon: <InboxOutlined />,
+          icon: <ExportOutlined />,
           label: <Link to="/inventory/inbound">入库</Link>,
         },
         {
           key: '/inventory/outbound',
-          icon: <ExportOutlined />,
           label: <Link to="/inventory/outbound">出库</Link>,
         },
         {
           key: '/inventory/inbound-order',
-          icon: <FileTextOutlined />,
           label: <Link to="/inventory/inbound-order">入库单</Link>,
         },
         {
           key: '/inventory/outbound-order',
-          icon: <FileTextOutlined />,
           label: <Link to="/inventory/outbound-order">出库单</Link>,
         },
         {
@@ -141,11 +271,10 @@ const BasicLayout = ({ children }) => {
     {
       key: 'partner',
       icon: <TeamOutlined />,
-      label: '合作伙伴',
+      label: '往来单位',
       children: [
         {
           key: '/partner/customer',
-          icon: <TeamOutlined />,
           label: <Link to="/partner/customer">客户管理</Link>,
         },
         {
@@ -170,6 +299,9 @@ const BasicLayout = ({ children }) => {
           {session?.company ? <span className={styles.logoSub}>仓库管理系统</span> : null}
         </div>
         <Space>
+          <Button type="link" icon={<SaveOutlined />} onClick={openCloudConfig}>
+            备份与同步
+          </Button>
           <Tooltip title={lastError || (status === 'online' ? '点击立即同步' : '点击配置云端同步')}>
             <Tag
               icon={status === 'online' ? <CloudSyncOutlined /> : <CloudOutlined />}
@@ -210,26 +342,19 @@ const BasicLayout = ({ children }) => {
       </Layout>
 
       <Modal
-        title="配置云端同步"
+        title="云端同步与数据备份"
         visible={cloudOpen}
         onCancel={() => setCloudOpen(false)}
         footer={null}
         destroyOnClose
+        width={560}
       >
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="与打卡小程序相同：用 GitHub Gist 存 JSON，多端实时同步"
-          description={
-            <span>
-              请到{' '}
-              <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer">
-                GitHub Token
-              </a>{' '}
-              新建 Personal Access Token，<b>只勾选 gist</b>，然后粘贴到下方。
-            </span>
-          }
+          message="防丢数据三层保障"
+          description="① 每次写入前自动做本地快照（最近 12 份）② 云端保留 backup-latest + 近 7 天按日备份 ③ 可随时导出 JSON 到电脑。删除采用软删除，避免多端把旧数据合并回来。"
         />
         <Form form={form} layout="vertical" onFinish={onSaveCloud}>
           <Form.Item
@@ -250,6 +375,69 @@ const BasicLayout = ({ children }) => {
             保存并连接云端
           </Button>
         </Form>
+
+        <Divider>数据备份 / 恢复</Divider>
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Space wrap>
+            <Button icon={<DownloadOutlined />} onClick={downloadBackup} loading={backupBusy}>
+              导出完整备份
+            </Button>
+            <Button
+              icon={<UploadOutlined />}
+              onClick={() => fileRef.current?.click()}
+              loading={backupBusy}
+            >
+              导入备份（合并）
+            </Button>
+            <Button icon={<SaveOutlined />} onClick={onManualBackup} loading={backupBusy}>
+              立即备份
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/json,.json"
+              style={{ display: 'none' }}
+              onChange={onPickImport}
+            />
+          </Space>
+
+          <div>
+            <div style={{ marginBottom: 8 }}>
+              <HistoryOutlined /> 从本地历史恢复
+            </div>
+            <Space style={{ width: '100%' }} align="start">
+              <Select
+                style={{ minWidth: 320, flex: 1 }}
+                placeholder="选择本地快照"
+                value={restoreId}
+                onChange={setRestoreId}
+                options={backupOptions}
+                allowClear
+              />
+              <Popconfirm
+                title="将用所选快照覆盖当前业务数据，确定？"
+                onConfirm={onRestoreLocal}
+                okText="恢复"
+                cancelText="取消"
+              >
+                <Button danger loading={backupBusy}>
+                  恢复
+                </Button>
+              </Popconfirm>
+            </Space>
+          </div>
+
+          <Popconfirm
+            title="将用云端 backup-latest.json 覆盖当前数据，确定？"
+            onConfirm={onRestoreCloud}
+            okText="恢复"
+            cancelText="取消"
+          >
+            <Button block loading={backupBusy}>
+              从云端最新备份恢复
+            </Button>
+          </Popconfirm>
+        </Space>
       </Modal>
     </Layout>
   );

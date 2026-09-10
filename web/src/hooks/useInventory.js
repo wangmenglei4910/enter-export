@@ -4,6 +4,7 @@ import {
   calcStockMap,
   todayStr,
   emptyData,
+  listLocalBackups,
 } from '@/services/inventoryStore';
 
 const InventoryContext = createContext(null);
@@ -44,6 +45,13 @@ export function InventoryProvider({ children }) {
       getConfigLink: store.getConfigLink.bind(store),
       login: store.login?.bind(store),
       register: store.register?.bind(store),
+      exportBackup: store.exportBackup?.bind(store),
+      importBackup: store.importBackup?.bind(store),
+      restoreLocalBackup: store.restoreLocalBackup?.bind(store),
+      restoreCloudLatest: store.restoreCloudLatest?.bind(store),
+      listCloudBackups: store.listCloudBackups?.bind(store),
+      createManualBackup: store.createManualBackup?.bind(store),
+      listLocalBackups: store.listLocalBackups?.bind(store) || listLocalBackups,
     };
   }, [snapshot, store]);
 
