@@ -1,12 +1,21 @@
 import React, { useState } from 'react';
 import { Form, Input, Button, Card, message, Tabs, Alert, Typography } from 'antd';
-import { UserOutlined, LockOutlined, CloudOutlined, CopyOutlined } from '@ant-design/icons';
+import {
+  UserOutlined,
+  LockOutlined,
+  CloudOutlined,
+  CopyOutlined,
+  BankOutlined,
+  MobileOutlined,
+  UserAddOutlined,
+} from '@ant-design/icons';
 import { history } from 'umi';
 import {
   isSyncReady,
   saveConfigOverride,
   resetInventoryStore,
   getInventoryStore,
+  isValidPhone,
 } from '@/services/inventoryStore';
 import styles from './index.less';
 
@@ -15,7 +24,10 @@ const { Paragraph, Text, Link } = Typography;
 
 const LoginPage = () => {
   const [syncForm] = Form.useForm();
+  const [loginForm] = Form.useForm();
+  const [registerForm] = Form.useForm();
   const [busy, setBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState(isSyncReady() ? 'login' : 'cloud');
   const cloudReady = isSyncReady();
 
   const onSaveCloud = async (values) => {
@@ -32,7 +44,8 @@ const LoginPage = () => {
         message.error(result.message || '云端连接失败');
         return;
       }
-      message.success('云端配置已保存，可以登录');
+      message.success('云端配置已保存，可以注册或登录');
+      setActiveTab('register');
     } catch (err) {
       message.error(err.message || '云端连接失败');
     } finally {
@@ -40,9 +53,10 @@ const LoginPage = () => {
     }
   };
 
-  const onFinish = async (values) => {
+  const onLogin = async (values) => {
     if (!isSyncReady()) {
       message.warning('请先配置云端同步（Gist + Token）');
+      setActiveTab('cloud');
       return;
     }
     setBusy(true);
@@ -50,11 +64,41 @@ const LoginPage = () => {
       resetInventoryStore();
       const store = getInventoryStore();
       await store.init();
-      await store.login(values.username, values.password);
-      message.success('登录成功，已开启多端同步');
+      await store.login(values.phone, values.password);
+      message.success('登录成功');
       history.replace('/home');
     } catch (err) {
       message.error(err.message || '登录失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRegister = async (values) => {
+    if (!isSyncReady()) {
+      message.warning('请先配置云端同步（Gist + Token）');
+      setActiveTab('cloud');
+      return;
+    }
+    if (values.password !== values.confirmPassword) {
+      message.error('两次输入的密码不一致');
+      return;
+    }
+    setBusy(true);
+    try {
+      resetInventoryStore();
+      const store = getInventoryStore();
+      await store.init();
+      await store.register({
+        phone: values.phone,
+        password: values.password,
+        company: values.company,
+        name: values.name,
+      });
+      message.success('注册成功，已自动登录');
+      history.replace('/home');
+    } catch (err) {
+      message.error(err.message || '注册失败');
     } finally {
       setBusy(false);
     }
@@ -83,10 +127,10 @@ const LoginPage = () => {
             showIcon
             style={{ marginBottom: 16 }}
             message="需先配置 GitHub Gist 才能多端实时同步"
-            description="与打卡小程序相同：Pages 打开网页，Gist 存 JSON 数据。"
+            description="注册账号会写入 accounts.json，并绑定公司名称。"
           />
         )}
-        <Tabs defaultActiveKey={cloudReady ? 'login' : 'cloud'}>
+        <Tabs activeKey={activeTab} onChange={setActiveTab}>
           <TabPane
             tab={
               <span>
@@ -96,30 +140,26 @@ const LoginPage = () => {
             key="cloud"
           >
             <Paragraph type="secondary" style={{ fontSize: 13 }}>
-              数据按菜单拆成多个 JSON 存到 Gist：
-              <Text code>accounts.json</Text>、<Text code>products.json</Text>、
-              <Text code>inbound.json</Text> 等。
-              <br />
               Token 仅勾选 <Text code>gist</Text>：
               <Link href="https://github.com/settings/tokens" target="_blank">
                 创建 Token
               </Link>
             </Paragraph>
-                  <Form
-                    form={syncForm}
-                    layout="vertical"
-                    onFinish={onSaveCloud}
-                    initialValues={{
-                      gistId: '722cc08e3721147e0dd4b255ca77801d',
-                      githubToken: '',
-                    }}
-                  >
+            <Form
+              form={syncForm}
+              layout="vertical"
+              onFinish={onSaveCloud}
+              initialValues={{
+                gistId: '722cc08e3721147e0dd4b255ca77801d',
+                githubToken: '',
+              }}
+            >
               <Form.Item
                 name="gistId"
                 label="Gist ID"
                 rules={[{ required: true, message: '请输入 gistId' }]}
               >
-                <Input placeholder="例如 28cec0bd06549afc96073735cb97243d" />
+                <Input placeholder="Gist ID" />
               </Form.Item>
               <Form.Item
                 name="githubToken"
@@ -143,6 +183,77 @@ const LoginPage = () => {
               )}
             </Form>
           </TabPane>
+
+          <TabPane
+            tab={
+              <span>
+                <UserAddOutlined /> 注册
+              </span>
+            }
+            key="register"
+          >
+            <Form form={registerForm} name="register" onFinish={onRegister} layout="vertical">
+              <Form.Item
+                name="company"
+                label="公司名称"
+                rules={[{ required: true, message: '请输入公司名称' }]}
+              >
+                <Input prefix={<BankOutlined />} placeholder="公司名称" size="large" />
+              </Form.Item>
+              <Form.Item
+                name="phone"
+                label="手机号"
+                rules={[
+                  { required: true, message: '请输入手机号' },
+                  {
+                    validator: (_, value) =>
+                      !value || isValidPhone(value)
+                        ? Promise.resolve()
+                        : Promise.reject(new Error('请输入11位手机号')),
+                  },
+                ]}
+              >
+                <Input prefix={<MobileOutlined />} placeholder="11位手机号" size="large" maxLength={11} />
+              </Form.Item>
+              <Form.Item name="name" label="姓名（可选）">
+                <Input prefix={<UserOutlined />} placeholder="联系人姓名" size="large" />
+              </Form.Item>
+              <Form.Item
+                name="password"
+                label="密码"
+                rules={[
+                  { required: true, message: '请输入密码' },
+                  { min: 4, message: '密码至少4位' },
+                ]}
+              >
+                <Input.Password prefix={<LockOutlined />} placeholder="设置密码" size="large" />
+              </Form.Item>
+              <Form.Item
+                name="confirmPassword"
+                label="确认密码"
+                dependencies={['password']}
+                rules={[
+                  { required: true, message: '请再次输入密码' },
+                  ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      if (!value || getFieldValue('password') === value) {
+                        return Promise.resolve();
+                      }
+                      return Promise.reject(new Error('两次密码不一致'));
+                    },
+                  }),
+                ]}
+              >
+                <Input.Password prefix={<LockOutlined />} placeholder="再次输入密码" size="large" />
+              </Form.Item>
+              <Form.Item>
+                <Button type="primary" htmlType="submit" block size="large" loading={busy}>
+                  注册并登录
+                </Button>
+              </Form.Item>
+            </Form>
+          </TabPane>
+
           <TabPane
             tab={
               <span>
@@ -151,15 +262,25 @@ const LoginPage = () => {
             }
             key="login"
           >
-            <Form name="login" onFinish={onFinish} autoComplete="off" layout="vertical">
+            <Form form={loginForm} name="login" onFinish={onLogin} layout="vertical">
               <Form.Item
-                name="username"
-                rules={[{ required: true, message: '请输入用户名/手机号' }]}
+                name="phone"
+                label="手机号"
+                rules={[
+                  { required: true, message: '请输入手机号' },
+                  {
+                    validator: (_, value) =>
+                      !value || isValidPhone(value)
+                        ? Promise.resolve()
+                        : Promise.reject(new Error('请输入11位手机号')),
+                  },
+                ]}
               >
-                <Input prefix={<UserOutlined />} placeholder="用户名 / 手机号" size="large" />
+                <Input prefix={<MobileOutlined />} placeholder="注册时的手机号" size="large" maxLength={11} />
               </Form.Item>
               <Form.Item
                 name="password"
+                label="密码"
                 rules={[{ required: true, message: '请输入密码' }]}
               >
                 <Input.Password prefix={<LockOutlined />} placeholder="密码" size="large" />
@@ -171,7 +292,7 @@ const LoginPage = () => {
               </Form.Item>
               {cloudReady ? (
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  云端已就绪，手机/电脑打开同一 Pages 地址即可同步
+                  使用注册手机号和密码登录；左上角将显示公司名称
                 </Text>
               ) : null}
             </Form>

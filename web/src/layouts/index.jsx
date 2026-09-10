@@ -36,7 +36,7 @@ const statusMeta = {
 
 const BasicLayout = ({ children }) => {
   const location = useLocation();
-  const { status, lastError, pullRemote, config, writing } = useInventory();
+  const { status, lastError, pullRemote, config, writing, session } = useInventory();
   const [cloudOpen, setCloudOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form] = Form.useForm();
@@ -165,7 +165,10 @@ const BasicLayout = ({ children }) => {
   return (
     <Layout className={styles.layout}>
       <Header className={styles.header}>
-        <div className={styles.logo}>仓库管理系统</div>
+        <div className={styles.logo}>
+          {session?.company ? `${session.company}` : '仓库管理系统'}
+          {session?.company ? <span className={styles.logoSub}>仓库管理系统</span> : null}
+        </div>
         <Space>
           <Tooltip title={lastError || (status === 'online' ? '点击立即同步' : '点击配置云端同步')}>
             <Tag

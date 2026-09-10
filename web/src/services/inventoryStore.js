@@ -37,16 +37,12 @@ export const COLLECTIONS = Object.keys(MENU_FILES);
 const DEFAULT_ACCOUNTS = [
   {
     id: '1',
+    phone: '13691054910',
     username: '13691054910',
     password: '12356336',
     name: '管理员',
-    updatedAt: 1,
-  },
-  {
-    id: '2',
-    username: 'wangmenglei',
-    password: '111111',
-    name: '王梦磊',
+    company: '默认公司',
+    companyId: 'c_default',
     updatedAt: 1,
   },
 ];
@@ -59,17 +55,37 @@ export function emptyData() {
 
 export function emptyAccounts() {
   return {
-    version: 1,
+    version: 2,
     updatedAt: 0,
-    users: DEFAULT_ACCOUNTS.map((u) => ({ ...u })),
+    users: [],
   };
 }
 
-function stamp(record) {
+function makeCompanyId(company) {
+  const safe = String(company || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .slice(0, 32);
+  return `c_${Date.now().toString(36)}_${safe || 'co'}`;
+}
+
+export function isValidPhone(phone) {
+  return /^1\d{10}$/.test(String(phone || '').trim());
+}
+
+function normalizePhone(phone) {
+  return String(phone || '').replace(/\D/g, '');
+}
+
+function stamp(record, companyId) {
   const now = Date.now();
+  const session = loadSession();
+  const cid = companyId || record.companyId || session?.companyId || '';
   return {
     ...record,
     id: String(record.id || now),
+    companyId: cid,
     updatedAt: now,
   };
 }
@@ -81,33 +97,43 @@ function normalizeList(list) {
     .map((item) => ({
       ...item,
       id: String(item.id || ''),
+      companyId: String(item.companyId || ''),
       updatedAt: Number(item.updatedAt) || 0,
     }))
     .filter((item) => item.id);
 }
 
+function normalizeUser(u) {
+  const phone = normalizePhone(u.phone || u.username);
+  const company = String(u.company || '').trim();
+  const companyId = String(u.companyId || (company ? `c_${phone}` : '') || '').trim();
+  return {
+    id: String(u.id || phone),
+    phone,
+    username: phone,
+    password: String(u.password || ''),
+    name: String(u.name || phone),
+    company,
+    companyId,
+    updatedAt: Number(u.updatedAt) || 0,
+  };
+}
+
 function normalizeAccounts(raw) {
-  const base = emptyAccounts();
-  if (!raw || typeof raw !== 'object') return base;
+  if (!raw || typeof raw !== 'object') {
+    return { version: 2, updatedAt: 0, users: [] };
+  }
   let users = [];
   if (Array.isArray(raw.users)) users = raw.users;
   else if (Array.isArray(raw.list)) users = raw.list;
   else if (Array.isArray(raw)) users = raw;
 
   users = users
-    .filter((u) => u && u.username)
-    .map((u) => ({
-      id: String(u.id || u.username),
-      username: String(u.username).trim(),
-      password: String(u.password || ''),
-      name: String(u.name || u.username),
-      updatedAt: Number(u.updatedAt) || 0,
-    }));
-
-  if (!users.length) users = DEFAULT_ACCOUNTS.map((u) => ({ ...u }));
+    .map(normalizeUser)
+    .filter((u) => u.phone && u.phone.length >= 6);
 
   return {
-    version: 1,
+    version: 2,
     updatedAt: Number(raw.updatedAt) || 0,
     users,
   };
@@ -157,17 +183,31 @@ function mergeData(local, remote) {
 }
 
 function mergeAccounts(local, remote) {
-  const users = mergeLists(local?.users || [], remote?.users || []);
-  // 保证默认账号始终存在
-  const byName = new Map(users.map((u) => [u.username, u]));
-  for (const d of DEFAULT_ACCOUNTS) {
-    if (!byName.has(d.username)) byName.set(d.username, { ...d });
+  const users = mergeLists(
+    (local?.users || []).map(normalizeUser),
+    (remote?.users || []).map(normalizeUser),
+  );
+  const byPhone = new Map();
+  for (const u of users) {
+    if (!u.phone) continue;
+    byPhone.set(u.phone, u);
   }
   return {
-    version: 1,
+    version: 2,
     updatedAt: Math.max(Number(local?.updatedAt) || 0, Number(remote?.updatedAt) || 0, Date.now()),
-    users: Array.from(byName.values()),
+    users: Array.from(byPhone.values()),
   };
+}
+
+function filterDataByCompany(raw, companyId) {
+  const data = normalizeData(raw);
+  if (!companyId) return data;
+  const next = emptyData();
+  next.updatedAt = data.updatedAt;
+  for (const key of COLLECTIONS) {
+    next[key] = (data[key] || []).filter((item) => String(item.companyId || '') === String(companyId));
+  }
+  return next;
 }
 
 function fingerprint(data) {
@@ -276,15 +316,32 @@ export function loadSession() {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed?.username) return null;
-    return parsed;
+    const phone = normalizePhone(parsed.phone || parsed.username);
+    if (!phone) return null;
+    return {
+      phone,
+      username: phone,
+      name: String(parsed.name || phone),
+      company: String(parsed.company || ''),
+      companyId: String(parsed.companyId || ''),
+    };
   } catch {
     return null;
   }
 }
 
-export function saveSession(username) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify({ username: String(username) }));
+export function saveSession(user) {
+  const phone = normalizePhone(user.phone || user.username);
+  localStorage.setItem(
+    SESSION_KEY,
+    JSON.stringify({
+      phone,
+      username: phone,
+      name: String(user.name || phone),
+      company: String(user.company || ''),
+      companyId: String(user.companyId || ''),
+    }),
+  );
   localStorage.setItem('isLoggedIn', 'true');
 }
 
@@ -461,14 +518,17 @@ export function getInventoryStore(userConfig = {}) {
   }
 
   function getSnapshot() {
+    const session = loadSession();
+    const all = normalizeData(data);
     return {
-      data: normalizeData(data),
+      data: filterDataByCompany(all, session?.companyId),
       accounts: normalizeAccounts(accounts),
+      session,
       status,
       lastError,
       isCloud: useCloud,
       config: cfg,
-      loggedIn: Boolean(loadSession()),
+      loggedIn: Boolean(session),
       writing,
     };
   }
@@ -544,11 +604,13 @@ export function getInventoryStore(userConfig = {}) {
 
   async function upsert(collection, record) {
     if (!COLLECTIONS.includes(collection)) throw new Error('未知数据集合');
-    const row = stamp(record);
+    const session = loadSession();
+    if (!session?.companyId) throw new Error('请先登录');
+    const row = stamp(record, session.companyId);
     return persist((prev) => {
       const list = [...(prev[collection] || [])];
       const idx = list.findIndex((item) => item.id === row.id);
-      if (idx >= 0) list[idx] = { ...list[idx], ...row };
+      if (idx >= 0) list[idx] = { ...list[idx], ...row, companyId: session.companyId };
       else list.unshift(row);
       return { ...prev, [collection]: list };
     }, collection);
@@ -556,10 +618,18 @@ export function getInventoryStore(userConfig = {}) {
 
   async function remove(collection, id) {
     if (!COLLECTIONS.includes(collection)) throw new Error('未知数据集合');
+    const session = loadSession();
     return persist(
       (prev) => ({
         ...prev,
-        [collection]: (prev[collection] || []).filter((item) => item.id !== String(id)),
+        [collection]: (prev[collection] || []).filter((item) => {
+          if (item.id !== String(id)) return true;
+          // 只能删本公司数据
+          if (session?.companyId && item.companyId && item.companyId !== session.companyId) {
+            return true;
+          }
+          return false;
+        }),
       }),
       collection,
     );
@@ -567,38 +637,127 @@ export function getInventoryStore(userConfig = {}) {
 
   async function replaceCollection(collection, list) {
     if (!COLLECTIONS.includes(collection)) throw new Error('未知数据集合');
+    const session = loadSession();
+    const companyId = session?.companyId || '';
     return persist(
       (prev) => ({
         ...prev,
-        [collection]: normalizeList(list),
+        [collection]: normalizeList(list).map((item) => ({
+          ...item,
+          companyId: item.companyId || companyId,
+        })),
       }),
       collection,
     );
   }
 
-  async function login(username, password) {
-    const user = String(username || '').trim();
+  async function register({ phone, password, company, name }) {
+    const p = normalizePhone(phone);
     const pass = String(password || '');
-    if (!user || !pass) throw new Error('请输入用户名和密码');
+    const co = String(company || '').trim();
+    if (!isValidPhone(p)) throw new Error('请输入正确的11位手机号');
+    if (pass.length < 4) throw new Error('密码至少4位');
+    if (!co) throw new Error('请填写公司名称');
     if (!useCloud) throw new Error('请先配置云端同步 Token');
 
-    // 先拉最新账号表
+    writing = true;
+    notify('idle');
+    try {
+      const remote = await fetchGistBundle(cfg.gistId, cfg.githubToken);
+      accounts = mergeAccounts(accounts, remote.accounts);
+      data = mergeData(data, remote.data);
+
+      if ((accounts.users || []).some((u) => u.phone === p)) {
+        throw new Error('该手机号已注册，请直接登录');
+      }
+
+      const user = normalizeUser({
+        id: `u_${Date.now()}`,
+        phone: p,
+        username: p,
+        password: pass,
+        name: String(name || p),
+        company: co,
+        companyId: makeCompanyId(co),
+        updatedAt: Date.now(),
+      });
+
+      accounts = {
+        version: 2,
+        updatedAt: Date.now(),
+        users: [...(accounts.users || []), user],
+      };
+
+      await patchGistFiles(
+        cfg.gistId,
+        cfg.githubToken,
+        buildGistFilesPatch(data, accounts, ['accounts']),
+      );
+      saveLocalAccounts(accounts);
+      saveSession(user);
+      lastError = '';
+      notify('online');
+      return user;
+    } catch (err) {
+      lastError = err.message || '注册失败';
+      notify('error');
+      throw err;
+    } finally {
+      writing = false;
+      notify();
+    }
+  }
+
+  async function login(phone, password) {
+    const p = normalizePhone(phone);
+    const pass = String(password || '');
+    if (!p || !pass) throw new Error('请输入手机号和密码');
+    if (!useCloud) throw new Error('请先配置云端同步 Token');
+
     const remote = await fetchGistBundle(cfg.gistId, cfg.githubToken);
     accounts = mergeAccounts(accounts, remote.accounts);
-    // 若云端还没有账号文件，写入默认账号
-    const hasAccountsFile = remote.accounts?.users?.length > 0;
-    if (!hasAccountsFile || !remote.accounts.users.some((u) => u.username === DEFAULT_ACCOUNTS[0].username)) {
-      accounts = mergeAccounts(accounts, emptyAccounts());
-      await patchGistFiles(cfg.gistId, cfg.githubToken, buildGistFilesPatch(data, accounts, ['accounts']));
+
+    // 兼容旧数据：云端完全无账号时写入一个可升级的默认账号
+    if (!(accounts.users || []).length) {
+      accounts = {
+        version: 2,
+        updatedAt: Date.now(),
+        users: DEFAULT_ACCOUNTS.map((u) => normalizeUser(u)),
+      };
+      await patchGistFiles(
+        cfg.gistId,
+        cfg.githubToken,
+        buildGistFilesPatch(data, accounts, ['accounts']),
+      );
     }
-    saveLocalAccounts(accounts);
 
-    const matched = (accounts.users || []).find(
-      (u) => u.username === user && String(u.password) === pass,
+    // 旧账号缺公司信息时补全
+    let matched = (accounts.users || []).find(
+      (u) => (u.phone === p || u.username === p) && String(u.password) === pass,
     );
-    if (!matched) throw new Error('用户名或密码错误');
+    if (!matched) throw new Error('手机号或密码错误');
 
-    saveSession(matched.username);
+    if (!matched.company || !matched.companyId) {
+      matched = normalizeUser({
+        ...matched,
+        company: matched.company || '默认公司',
+        companyId: matched.companyId || 'c_default',
+        updatedAt: Date.now(),
+      });
+      accounts = {
+        ...accounts,
+        updatedAt: Date.now(),
+        users: (accounts.users || []).map((u) => (u.phone === matched.phone ? matched : u)),
+      };
+      await patchGistFiles(
+        cfg.gistId,
+        cfg.githubToken,
+        buildGistFilesPatch(data, accounts, ['accounts']),
+      );
+    }
+
+    saveLocalAccounts(accounts);
+    saveSession(matched);
     data = mergeData(data, remote.data);
     saveLocalData(data);
     lastError = '';
@@ -716,6 +875,7 @@ export function getInventoryStore(userConfig = {}) {
     pullRemote,
     persist,
     login,
+    register,
     isCloud: useCloud,
     config: cfg,
     getConfigLink,
