@@ -183,18 +183,18 @@ function mergeData(local, remote) {
 }
 
 function mergeAccounts(local, remote) {
-  const users = mergeLists(
-    (local?.users || []).map(normalizeUser),
-    (remote?.users || []).map(normalizeUser),
-  );
+  // 账号以整份快照为准（按 updatedAt），避免「云端已清空但本地旧用户被合并回来」
+  const localTs = Number(local?.updatedAt) || 0;
+  const remoteTs = Number(remote?.updatedAt) || 0;
+  const source = remoteTs >= localTs ? remote : local;
   const byPhone = new Map();
-  for (const u of users) {
+  for (const u of (source?.users || []).map(normalizeUser)) {
     if (!u.phone) continue;
     byPhone.set(u.phone, u);
   }
   return {
     version: 2,
-    updatedAt: Math.max(Number(local?.updatedAt) || 0, Number(remote?.updatedAt) || 0, Date.now()),
+    updatedAt: Math.max(localTs, remoteTs),
     users: Array.from(byPhone.values()),
   };
 }
@@ -555,16 +555,16 @@ export function getInventoryStore(userConfig = {}) {
   async function pushRemote(changedKeys) {
     const remote = await fetchGistBundle(cfg.gistId, cfg.githubToken);
     data = mergeData(data, remote.data);
-    accounts = mergeAccounts(accounts, remote.accounts);
+    // 业务数据推送时账号以云端为准，防止本地旧号覆盖已清空的账号
+    accounts = normalizeAccounts(remote.accounts);
     data.updatedAt = Date.now();
-    accounts.updatedAt = Date.now();
 
     const keys = changedKeys && changedKeys.length ? changedKeys : null;
     const files = buildGistFilesPatch(data, accounts, keys);
     const written = await patchGistFiles(cfg.gistId, cfg.githubToken, files);
     if (written) {
       data = written.data;
-      accounts = written.accounts;
+      if (written.accounts) accounts = written.accounts;
     }
     saveLocalData(data);
     saveLocalAccounts(accounts);
@@ -664,7 +664,8 @@ export function getInventoryStore(userConfig = {}) {
     notify('idle');
     try {
       const remote = await fetchGistBundle(cfg.gistId, cfg.githubToken);
-      accounts = mergeAccounts(accounts, remote.accounts);
+      // 注册查重以云端为准，不合并本地旧缓存
+      accounts = normalizeAccounts(remote.accounts);
       data = mergeData(data, remote.data);
 
       if ((accounts.users || []).some((u) => u.phone === p)) {
@@ -715,7 +716,8 @@ export function getInventoryStore(userConfig = {}) {
     if (!useCloud) throw new Error('请先配置云端同步 Token');
 
     const remote = await fetchGistBundle(cfg.gistId, cfg.githubToken);
-    accounts = mergeAccounts(accounts, remote.accounts);
+    // 登录以云端账号为准
+    accounts = normalizeAccounts(remote.accounts);
 
     let matched = (accounts.users || []).find(
       (u) => (u.phone === p || u.username === p) && String(u.password) === pass,
@@ -756,24 +758,16 @@ export function getInventoryStore(userConfig = {}) {
     try {
       const remote = await fetchGistBundle(cfg.gistId, cfg.githubToken);
       const merged = mergeData(data, remote.data);
-      const mergedAccounts = mergeAccounts(accounts, remote.accounts);
       const remoteFp = fingerprint(remote.data);
       const mergedFp = fingerprint(merged);
 
       data = merged;
-      accounts = mergedAccounts;
+      // 账号列表以云端为准，避免本地旧号写回 Gist
+      accounts = normalizeAccounts(remote.accounts);
       saveLocalData(data);
       saveLocalAccounts(accounts);
 
-      // 云端缺文件时补齐
-      const needSeed =
-        !remote.accounts?.users?.length ||
-        COLLECTIONS.some((key) => {
-          // 无法直接知道文件是否存在，用空且从未写过来近似；首次 ensure
-          return false;
-        });
-
-      if (mergedFp !== remoteFp || needSeed) {
+      if (mergedFp !== remoteFp) {
         writing = true;
         try {
           data.updatedAt = Date.now();
