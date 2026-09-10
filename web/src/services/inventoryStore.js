@@ -717,31 +717,16 @@ export function getInventoryStore(userConfig = {}) {
     const remote = await fetchGistBundle(cfg.gistId, cfg.githubToken);
     accounts = mergeAccounts(accounts, remote.accounts);
 
-    // 兼容旧数据：云端完全无账号时写入一个可升级的默认账号
-    if (!(accounts.users || []).length) {
-      accounts = {
-        version: 2,
-        updatedAt: Date.now(),
-        users: DEFAULT_ACCOUNTS.map((u) => normalizeUser(u)),
-      };
-      await patchGistFiles(
-        cfg.gistId,
-        cfg.githubToken,
-        buildGistFilesPatch(data, accounts, ['accounts']),
-      );
-    }
-
-    // 旧账号缺公司信息时补全
     let matched = (accounts.users || []).find(
       (u) => (u.phone === p || u.username === p) && String(u.password) === pass,
     );
-    if (!matched) throw new Error('手机号或密码错误');
+    if (!matched) throw new Error('手机号或密码错误，请先注册');
 
     if (!matched.company || !matched.companyId) {
       matched = normalizeUser({
         ...matched,
         company: matched.company || '默认公司',
-        companyId: matched.companyId || 'c_default',
+        companyId: matched.companyId || makeCompanyId(matched.company || '默认公司'),
         updatedAt: Date.now(),
       });
       accounts = {
